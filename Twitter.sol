@@ -4,12 +4,15 @@ pragma solidity ^0.8.19;
 contract TweetContract {
     uint internal tweetId = 0;
     uint internal messageId = 0;
+    uint internal commentId = 0;
 
     struct Tweet {
         uint ID;
         address author;
         string content;
         uint createTimestamp;
+        uint likeCount;
+        uint commentCount;
     }
 
     struct Message {
@@ -20,17 +23,30 @@ contract TweetContract {
         uint createTimestamp;
     }
 
+    struct Comment {
+        uint ID;
+        uint tweetId;
+        address author;
+        string content;
+        uint createTimestamp;
+    }
+
     mapping(uint => Tweet) public tweets;
     mapping(address => uint[]) public tweetsOf;
     mapping(address => Message[]) public conversations;
     mapping(address => mapping(address => bool)) public operators;
     mapping(address => address[]) public following;
+    mapping(uint => Comment[]) public tweetComments;        // New: Comments per tweet
+    mapping(uint => mapping(address => bool)) public likes; // New: Likes per tweet per user
+    mapping(uint => uint[]) public tweetCommentIds;         // New: Comment IDs per tweet
 
     event TweetCreated(uint id, address indexed author, string content, uint timestamp);
     event MessageSent(uint id, address indexed sender, address indexed receiver, string content, uint timestamp);
     event Follow(address indexed follower, address indexed followed);
     event OperatorAllowed(address indexed user, address indexed operator);
     event OperatorDisallowed(address indexed user, address indexed operator);
+    event TweetLiked(uint indexed tweetId, address indexed liker);          // New
+    event CommentCreated(uint id, uint indexed tweetId, address indexed author, string content, uint timestamp); // New
 
     modifier operatorAccess(address _user, address _operator) {
         require(operators[_user][_operator] || _user == _operator, "You are not an operator of the user's account");
@@ -44,7 +60,9 @@ contract TweetContract {
             ID: tweetId,
             author: _from,
             content: _content,
-            createTimestamp: block.timestamp
+            createTimestamp: block.timestamp,
+            likeCount: 0,
+            commentCount: 0
         });
 
         tweets[tweetId] = newTweet;
@@ -67,10 +85,42 @@ contract TweetContract {
         });
 
         conversations[_from].push(newMessage);
-        conversations[_to].push(newMessage); // Added to store for receiver too
+        conversations[_to].push(newMessage);
         messageId++;
 
         emit MessageSent(messageId - 1, _from, _to, _content, block.timestamp);
+    }
+
+    // New: Like a tweet
+    function likeTweet(uint _tweetId) public {
+        require(_tweetId < tweetId, "Tweet does not exist");
+        require(!likes[_tweetId][msg.sender], "Already liked this tweet");
+        
+        likes[_tweetId][msg.sender] = true;
+        tweets[_tweetId].likeCount++;
+        
+        emit TweetLiked(_tweetId, msg.sender);
+    }
+
+    // New: Comment on a tweet
+    function commentOnTweet(uint _tweetId, string memory _content) public {
+        require(_tweetId < tweetId, "Tweet does not exist");
+        require(bytes(_content).length > 0, "Comment cannot be empty");
+
+        Comment memory newComment = Comment({
+            ID: commentId,
+            tweetId: _tweetId,
+            author: msg.sender,
+            content: _content,
+            createTimestamp: block.timestamp
+        });
+
+        tweetComments[_tweetId].push(newComment);
+        tweetCommentIds[_tweetId].push(commentId);
+        tweets[_tweetId].commentCount++;
+        commentId++;
+
+        emit CommentCreated(commentId - 1, _tweetId, msg.sender, _content, block.timestamp);
     }
 
     function tweet(string memory _content) public {
@@ -144,5 +194,19 @@ contract TweetContract {
             userLatestTweets[i] = tweets[tweetIndex];
         }
         return userLatestTweets;
+    }
+
+    // New: Get comments for a tweet
+    function getTweetComments(uint _tweetId, uint count) public view returns (Comment[] memory) {
+        require(_tweetId < tweetId, "Tweet does not exist");
+        uint commentCount = tweetComments[_tweetId].length;
+        require(count > 0, "Count must be greater than 0");
+        require(count <= commentCount, "Not enough comments");
+
+        Comment[] memory comments = new Comment[](count);
+        for (uint i = 0; i < count; i++) {
+            comments[i] = tweetComments[_tweetId][commentCount - count + i];
+        }
+        return comments;
     }
 }
